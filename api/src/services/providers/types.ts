@@ -1,5 +1,6 @@
 export interface RawFixture {
   externalId: number;
+  apiFootballId?: number | null;
   competition: string;
   gameweek: number;
   homeTeamExternalId: number;
@@ -12,6 +13,7 @@ export interface RawFixture {
 
 export interface RawTeam {
   externalId: number;
+  apiFootballId?: number | null;
   name: string;
   shortName: string;
   crestUrl: string | null;

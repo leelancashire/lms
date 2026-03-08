@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import FixtureCard from "../components/FixtureCard";
 import Skeleton from "../components/Skeleton";
 import { apiClient } from "../api/client";
+import { competitionLabel } from "../lib/competitions";
 
 interface TeamLite {
   id: number;
@@ -58,6 +60,8 @@ function resultClass(result: TeamFormRow["result"]) {
 }
 
 export default function FixturesHistoryPage() {
+  const [searchParams] = useSearchParams();
+  const competition = searchParams.get("competition") ?? "ALL";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
@@ -69,16 +73,16 @@ export default function FixturesHistoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const current = await apiClient.get<{ gameweek: number }>("/api/fixtures/current-gameweek");
+      const current = await apiClient.get<{ gameweek: number }>(`/api/fixtures/current-gameweek?competition=${competition}`);
       const to = current.data.gameweek;
-      const res = await apiClient.get<HistoryResponse>(`/api/fixtures/history?from=1&to=${to}`);
+      const res = await apiClient.get<HistoryResponse>(`/api/fixtures/history?from=1&to=${to}&competition=${competition}`);
       setHistory(res.data);
     } catch (err: any) {
       setError(err?.response?.data?.error ?? "Failed to load fixture history");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [competition]);
 
   useEffect(() => {
     void load();
@@ -89,7 +93,7 @@ export default function FixturesHistoryPage() {
     setFormLoading(true);
     setTeamForm(null);
     try {
-      const res = await apiClient.get<TeamFormResponse>(`/api/teams/${team.id}/form?limit=6`);
+      const res = await apiClient.get<TeamFormResponse>(`/api/teams/${team.id}/form?limit=6&competition=${competition}`);
       setTeamForm(res.data.form);
     } catch {
       setTeamForm([]);
@@ -135,7 +139,7 @@ export default function FixturesHistoryPage() {
       <header>
         <h1 className="font-outfit text-3xl font-extrabold text-slate-100">Fixture History</h1>
         <p className="font-dm mt-1 text-sm text-slate-400">
-          Gameweeks 1 to {history?.to ?? "-"}.
+          {competitionLabel(competition)} · Gameweeks 1 to {history?.to ?? "-"}.
           Click a team badge for last 6 results.
         </p>
       </header>

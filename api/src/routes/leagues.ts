@@ -1,6 +1,7 @@
 import { LeagueStatus, Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
+import { COMPETITIONS } from "../config/competitions";
 import { prisma } from "../config/db";
 import { authMiddleware } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -12,6 +13,7 @@ router.use(authMiddleware);
 const createLeagueBody = z.object({
   name: z.string().min(1).max(100),
   isPublic: z.boolean().optional().default(false),
+  competition: z.enum(COMPETITIONS.map((c) => c.code) as [string, ...string[]]).optional().default("ALL"),
 });
 
 const leagueIdParams = z.object({
@@ -47,7 +49,7 @@ router.post("/", validate({ body: createLeagueBody }), async (req, res) => {
   const userId = req.user?.id;
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-  const { name, isPublic } = req.body as z.infer<typeof createLeagueBody>;
+  const { name, isPublic, competition } = req.body as z.infer<typeof createLeagueBody>;
   const code = await createUniqueInviteCode();
 
   const league = await prisma.$transaction(async (tx) => {
@@ -55,6 +57,7 @@ router.post("/", validate({ body: createLeagueBody }), async (req, res) => {
       data: {
         name,
         isPublic,
+        competition,
         code,
         creatorId: userId,
       },
@@ -227,7 +230,7 @@ router.get("/:id", validate({ params: leagueIdParams }), async (req, res) => {
     pickCount: pickCountMap.get(m.userId) ?? 0,
   }));
 
-  const currentGameweek = await getCurrentGameweekInfo();
+  const currentGameweek = await getCurrentGameweekInfo(league.competition);
 
   return res.json({
     league: {

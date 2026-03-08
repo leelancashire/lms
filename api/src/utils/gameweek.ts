@@ -1,4 +1,5 @@
 import { prisma } from "../config/db";
+import { env } from "../config/env";
 
 export type GameweekStatus = "pre" | "active" | "complete";
 
@@ -8,19 +9,34 @@ export interface CurrentGameweekInfo {
   status: GameweekStatus;
 }
 
-export async function getGameweekDeadline(gameweek: number): Promise<Date | null> {
+function competitionWhere(competition?: string) {
+  return competition && competition !== "ALL" ? { competition } : {};
+}
+
+export function getAdminActiveMatchDateRangeUtc():
+  | { start: Date; end: Date; date: string }
+  | null {
+  const value = env.ADMIN_ACTIVE_MATCH_DATE;
+  if (!value) return null;
+  const start = new Date(`${value}T00:00:00.000Z`);
+  const end = new Date(`${value}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return { start, end, date: value };
+}
+
+export async function getGameweekDeadline(gameweek: number, competition?: string): Promise<Date | null> {
   const earliest = await prisma.fixture.findFirst({
-    where: { gameweek },
+    where: { gameweek, ...competitionWhere(competition) },
     orderBy: { kickoffTime: "asc" },
     select: { kickoffTime: true },
   });
-
   return earliest?.kickoffTime ?? null;
 }
 
-export async function getCurrentGameweekInfo(): Promise<CurrentGameweekInfo | null> {
+export async function getCurrentGameweekInfo(competition?: string): Promise<CurrentGameweekInfo | null> {
   const gameweeks = await prisma.fixture.groupBy({
     by: ["gameweek"],
+    where: competitionWhere(competition),
     _min: { kickoffTime: true },
     _max: { kickoffTime: true },
     orderBy: { gameweek: "asc" },
@@ -50,9 +66,10 @@ export async function getCurrentGameweekInfo(): Promise<CurrentGameweekInfo | nu
   return { gameweek: last.gameweek, deadline: last._min.kickoffTime, status: "complete" };
 }
 
-export async function getNextOpenGameweekInfo(now = new Date()): Promise<CurrentGameweekInfo | null> {
+export async function getNextOpenGameweekInfo(now = new Date(), competition?: string): Promise<CurrentGameweekInfo | null> {
   const gameweeks = await prisma.fixture.groupBy({
     by: ["gameweek"],
+    where: competitionWhere(competition),
     _min: { kickoffTime: true },
     _max: { kickoffTime: true },
     orderBy: { gameweek: "asc" },

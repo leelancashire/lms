@@ -1,10 +1,27 @@
 import { Router } from "express";
+import { z } from "zod";
+import { COMPETITIONS } from "../config/competitions";
 import { prisma } from "../config/db";
 
 const router = Router();
+const competitionSchema = z.enum(COMPETITIONS.map((c) => c.code) as [string, ...string[]]).optional().default("ALL");
+function competitionWhere(competition: string) {
+  return competition === "ALL" ? {} : { competition };
+}
 
-router.get("/", async (_req, res) => {
+router.get("/", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) return res.status(400).json({ error: "Invalid competition code" });
+  const competition = compParsed.data;
+
+  const teamIdsRows = await prisma.fixture.findMany({
+    where: competitionWhere(competition),
+    select: { homeTeamId: true, awayTeamId: true },
+  });
+  const teamIds = Array.from(new Set(teamIdsRows.flatMap((f) => [f.homeTeamId, f.awayTeamId])));
+
   const teams = await prisma.team.findMany({
+    where: teamIds.length ? { id: { in: teamIds } } : { id: { in: [] } },
     orderBy: { name: "asc" },
   });
 
@@ -12,10 +29,14 @@ router.get("/", async (_req, res) => {
 });
 
 router.get("/form-strip", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) return res.status(400).json({ error: "Invalid competition code" });
+  const competition = compParsed.data;
   const limit = Math.max(1, Math.min(10, Number(req.query.limit ?? 5)));
 
   const fixtures = await prisma.fixture.findMany({
     where: {
+      ...competitionWhere(competition),
       status: { in: ["FINISHED", "POSTPONED"] },
     },
     orderBy: { kickoffTime: "desc" },
@@ -62,11 +83,19 @@ router.get("/form-strip", async (req, res) => {
     }
   }
 
+  const teamIdsRows = await prisma.fixture.findMany({
+    where: competitionWhere(competition),
+    select: { homeTeamId: true, awayTeamId: true },
+  });
+  const teamIds = Array.from(new Set(teamIdsRows.flatMap((f) => [f.homeTeamId, f.awayTeamId])));
+
   const teams = await prisma.team.findMany({
+    where: teamIds.length ? { id: { in: teamIds } } : { id: { in: [] } },
     select: { id: true },
   });
 
   return res.json({
+    competition,
     limit,
     strips: teams.map((team) => ({
       teamId: team.id,
@@ -76,6 +105,9 @@ router.get("/form-strip", async (req, res) => {
 });
 
 router.get("/:teamId/form", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) return res.status(400).json({ error: "Invalid competition code" });
+  const competition = compParsed.data;
   const teamId = Number(req.params.teamId);
   const limit = Math.max(1, Math.min(20, Number(req.query.limit ?? 6)));
 
@@ -94,6 +126,7 @@ router.get("/:teamId/form", async (req, res) => {
 
   const fixtures = await prisma.fixture.findMany({
     where: {
+      ...competitionWhere(competition),
       OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
       status: { in: ["FINISHED", "POSTPONED"] },
     },
@@ -135,7 +168,7 @@ router.get("/:teamId/form", async (req, res) => {
     };
   });
 
-  return res.json({ team, form });
+  return res.json({ competition, team, form });
 });
 
 export default router;

@@ -25,6 +25,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   ADMIN_EMAILS: z.string().optional(),
+  ADMIN_ACTIVE_MATCH_DATE: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

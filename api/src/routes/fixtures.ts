@@ -1,16 +1,21 @@
 import { Router } from "express";
 import { z } from "zod";
+import { COMPETITIONS } from "../config/competitions";
 import { env } from "../config/env";
 import { prisma } from "../config/db";
 import { authMiddleware } from "../middleware/auth";
 import { syncOddsForGameweek } from "../services/oddsSync";
 import { processGameweekResults } from "../services/resultProcessor";
-import { getCurrentGameweekInfo, getGameweekDeadline, getNextOpenGameweekInfo } from "../utils/gameweek";
+import { getAdminActiveMatchDateRangeUtc, getCurrentGameweekInfo, getGameweekDeadline, getNextOpenGameweekInfo } from "../utils/gameweek";
 
 const router = Router();
 const gameweekParamSchema = z.object({
   gameweek: z.coerce.number().int().positive(),
 });
+const competitionSchema = z.enum(COMPETITIONS.map((c) => c.code) as [string, ...string[]]).optional().default("ALL");
+function competitionWhere(competition: string) {
+  return competition === "ALL" ? {} : { competition };
+}
 
 function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
@@ -23,15 +28,33 @@ function isAdminEmail(email?: string | null): boolean {
 }
 
 router.get("/", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+  const competition = compParsed.data;
   const gameweekParam = req.query.gameweek;
   const gameweek = Number(gameweekParam);
+  const dateParam = typeof req.query.date === "string" ? req.query.date : undefined;
+  const dateMatch = dateParam ? /^\d{4}-\d{2}-\d{2}$/.test(dateParam) : true;
 
   if (!gameweekParam || Number.isNaN(gameweek) || gameweek < 1) {
     return res.status(400).json({ error: "Query parameter 'gameweek' must be a positive number" });
   }
+  if (!dateMatch) {
+    return res.status(400).json({ error: "Query parameter 'date' must be in YYYY-MM-DD format" });
+  }
+
+  const dateRange = dateParam
+    ? { gte: new Date(`${dateParam}T00:00:00.000Z`), lte: new Date(`${dateParam}T23:59:59.999Z`) }
+    : undefined;
 
   const fixtures = await prisma.fixture.findMany({
-    where: { gameweek },
+    where: {
+      gameweek,
+      ...competitionWhere(competition),
+      ...(dateRange ? { kickoffTime: dateRange } : {}),
+    },
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -39,13 +62,17 @@ router.get("/", async (req, res) => {
     orderBy: { kickoffTime: "asc" },
   });
 
-  const deadline = await getGameweekDeadline(gameweek);
+  const deadline = await getGameweekDeadline(gameweek, competition);
 
-  return res.json({ fixtures, deadline });
+  return res.json({ fixtures, deadline, activeDate: getAdminActiveMatchDateRangeUtc()?.date ?? null, appliedDate: dateParam ?? null });
 });
 
-router.get("/current-gameweek", async (_req, res) => {
-  const info = await getCurrentGameweekInfo();
+router.get("/current-gameweek", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+  const info = await getCurrentGameweekInfo(compParsed.data);
 
   if (!info) {
     return res.status(404).json({ error: "No fixtures available" });
@@ -54,8 +81,12 @@ router.get("/current-gameweek", async (_req, res) => {
   return res.json(info);
 });
 
-router.get("/next-open-gameweek", async (_req, res) => {
-  const info = await getNextOpenGameweekInfo();
+router.get("/next-open-gameweek", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+  const info = await getNextOpenGameweekInfo(new Date(), compParsed.data);
 
   if (!info) {
     return res.status(404).json({ error: "No open gameweek available" });
@@ -65,10 +96,15 @@ router.get("/next-open-gameweek", async (_req, res) => {
 });
 
 router.get("/history", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+  const competition = compParsed.data;
   const fromRaw = req.query.from;
   const toRaw = req.query.to;
 
-  const current = await getCurrentGameweekInfo();
+  const current = await getCurrentGameweekInfo(competition);
   if (!current) return res.status(404).json({ error: "No fixtures available" });
 
   const from = fromRaw == null ? 1 : Number(fromRaw);
@@ -80,6 +116,7 @@ router.get("/history", async (req, res) => {
 
   const fixtures = await prisma.fixture.findMany({
     where: {
+      ...competitionWhere(competition),
       gameweek: {
         gte: from,
         lte: to,
@@ -108,6 +145,7 @@ router.get("/history", async (req, res) => {
   return res.json({
     from,
     to,
+    competition,
     currentGameweek: current.gameweek,
     gameweeks,
   });
@@ -134,13 +172,18 @@ router.get("/:fixtureId/events", async (req, res) => {
 });
 
 router.get("/:gameweek/odds", async (req, res) => {
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+  const competition = compParsed.data;
   const gameweek = Number(req.params.gameweek);
   if (!Number.isInteger(gameweek) || gameweek < 1) {
     return res.status(400).json({ error: "Route param 'gameweek' must be a positive integer" });
   }
 
   const fixtures = await prisma.fixture.findMany({
-    where: { gameweek },
+    where: { gameweek, ...competitionWhere(competition) },
     include: {
       homeTeam: { select: { id: true, name: true, shortName: true } },
       awayTeam: { select: { id: true, name: true, shortName: true } },
@@ -162,7 +205,7 @@ router.get("/:gameweek/odds", async (req, res) => {
       oddsUpdatedAt: f.oddsUpdatedAt,
     }));
 
-  return res.json({ gameweek, odds });
+  return res.json({ competition, gameweek, odds });
 });
 
 router.post("/:gameweek/process-results", authMiddleware, async (req, res) => {
@@ -175,7 +218,12 @@ router.post("/:gameweek/process-results", authMiddleware, async (req, res) => {
     return res.status(400).json({ error: "Route param 'gameweek' must be a positive integer" });
   }
 
-  const result = await processGameweekResults(parsed.data.gameweek);
+  const compParsed = competitionSchema.safeParse(req.query.competition);
+  if (!compParsed.success) {
+    return res.status(400).json({ error: "Invalid competition code" });
+  }
+
+  const result = await processGameweekResults(parsed.data.gameweek, compParsed.data);
   return res.json({ success: true, result });
 });
 

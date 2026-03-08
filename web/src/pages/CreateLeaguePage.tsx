@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useToast } from "../context/ToastContext";
+import { COMPETITIONS, type CompetitionCode } from "../lib/competitions";
 
 interface CreateLeagueResponse {
   league: {
@@ -9,6 +10,7 @@ interface CreateLeagueResponse {
     name: string;
     code: string;
     isPublic: boolean;
+    competition: CompetitionCode;
   };
 }
 
@@ -18,7 +20,7 @@ export default function CreateLeaguePage() {
 
   const [name, setName] = useState("");
   const [isPublic, setIsPublic] = useState(false);
-  const [competition] = useState("PL");
+  const [competition, setCompetition] = useState<CompetitionCode>("ALL");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreateLeagueResponse["league"] | null>(null);
@@ -37,6 +39,7 @@ export default function CreateLeaguePage() {
       const res = await apiClient.post<CreateLeagueResponse>("/api/leagues", {
         name: name.trim(),
         isPublic,
+        competition,
       });
       setCreated(res.data.league);
       showToast("League created", "success");
@@ -81,10 +84,14 @@ export default function CreateLeaguePage() {
             <label className="font-dm mb-1 block text-sm text-slate-300">Competition</label>
             <select
               value={competition}
-              disabled
+              onChange={(e) => setCompetition(e.target.value as CompetitionCode)}
               className="font-dm w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-200"
             >
-              <option value="PL">Premier League</option>
+              {COMPETITIONS.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
             </select>
           </div>
 

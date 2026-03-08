@@ -1,5 +1,43 @@
 # LMS (Last Man Standing)
 
+## Current Status (March 8, 2026)
+
+### Implemented
+- Monorepo setup with `api/` (Node + TS + Express + Prisma) and `web/` (React + Vite + TS + Tailwind).
+- Auth flows (register/login/refresh/me), league CRUD, picks, result processing, live screen/socket wiring, notifications scaffolding.
+- Fixture history + team form guide modal/strip.
+- Multi-competition architecture added:
+  - `PL`, `ELC`, `EL1`, `EL2`, `SPL`, `SCH`, plus `ALL` mode.
+  - Home and Pick include league selection and additional competition-view filter when league competition is `ALL`.
+- Optional agreed-date fixture filter (admin env-driven) for Home/Pick display:
+  - `ADMIN_ACTIVE_MATCH_DATE=YYYY-MM-DD`
+- Provider fallback logic:
+  - football-data.org remains primary.
+  - API-Football fallback for fixture sync is wired for competitions missing from football-data responses.
+
+### Current Known Constraint
+- Real fixture coverage depends on API provider plan/access.
+- Right now, environment testing indicates Premier League + Championship are available first; other leagues may remain empty if provider account does not return data for those league IDs.
+
+### Environment Notes
+- Required for fallback sync:
+  - `FOOTBALL_DATA_ORG_API_KEY`
+  - `API_FOOTBALL_KEY` (must be non-empty)
+- Verify key loaded:
+```bash
+cd ~/lms/api
+set -a; source .env; set +a
+echo "${#API_FOOTBALL_KEY}"
+```
+
+### Next Steps
+1. Confirm API-Football per-league coverage (league IDs 39, 40, 41, 42, 179, 180).
+2. If coverage is limited:
+   - either upgrade provider plan, or
+   - explicitly keep unsupported leagues empty, or
+   - re-enable mock fallback only for unsupported leagues.
+3. Add admin UI/API to manage agreed date instead of env var + restart.
+
 ## Run Locally
 
 ### 1) Start PostgreSQL
@@ -61,4 +99,3 @@ navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregist
 caches.keys().then(keys => keys.forEach(k => caches.delete(k)))
 location.reload()
 ```
-

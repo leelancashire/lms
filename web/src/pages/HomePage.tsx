@@ -8,10 +8,12 @@ import FixtureCard from "../components/FixtureCard";
 import Skeleton from "../components/Skeleton";
 import TeamBadge from "../components/TeamBadge";
 import { useAuth } from "../context/AuthContext";
+import { COMPETITIONS, competitionLabel } from "../lib/competitions";
 
 interface LeagueListItem {
   id: string;
   name: string;
+  competition: string;
 }
 
 interface MemberRow {
@@ -48,12 +50,19 @@ interface FormStripResponse {
 
 interface Fixture {
   id: string;
+  competition?: string;
   kickoffTime: string;
   status: string;
   homeScore: number | null;
   awayScore: number | null;
   homeTeam: { id: number; shortName: string; crestUrl?: string | null; name: string };
   awayTeam: { id: number; shortName: string; crestUrl?: string | null; name: string };
+}
+interface FixturesResponse {
+  fixtures: Fixture[];
+  deadline: string | null;
+  activeDate?: string | null;
+  appliedDate?: string | null;
 }
 
 interface TeamLite {
@@ -110,13 +119,18 @@ export default function HomePage() {
   const navigate = useNavigate();
 
   const [leagueId, setLeagueId] = useState<string | null>(null);
+  const [leagues, setLeagues] = useState<LeagueListItem[]>([]);
   const [leagueName, setLeagueName] = useState<string>("Your League");
+  const [leagueCompetition, setLeagueCompetition] = useState<string>("ALL");
+  const [viewCompetition, setViewCompetition] = useState<string>("ALL");
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [currentGameweek, setCurrentGameweek] = useState<number>(1);
   const [deadline, setDeadline] = useState<string | null>(null);
   const [picks, setPicks] = useState<PickRow[]>([]);
   const [availableTeamsCount, setAvailableTeamsCount] = useState<number>(0);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
+  const [activeDate, setActiveDate] = useState<string | null>(null);
+  const [dateFilterOnly, setDateFilterOnly] = useState(false);
   const [formStripByTeam, setFormStripByTeam] = useState<Record<number, Array<"W" | "D" | "L" | "P">>>({});
   const [selectedTeam, setSelectedTeam] = useState<TeamLite | null>(null);
   const [teamForm, setTeamForm] = useState<TeamFormRow[] | null>(null);
@@ -124,19 +138,30 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetLeagueId?: string) => {
     setLoading(true);
     setError(null);
     try {
       const leaguesRes = await apiClient.get<{ leagues: LeagueListItem[] }>("/api/leagues");
-      const firstLeague = leaguesRes.data.leagues[0];
-      if (!firstLeague) {
+      const allLeagues = leaguesRes.data.leagues;
+      setLeagues(allLeagues);
+      if (!allLeagues.length) {
         setLeagueId(null);
         return;
       }
 
-      const id = firstLeague.id;
+      const selected =
+        allLeagues.find((l) => l.id === targetLeagueId) ??
+        allLeagues.find((l) => l.id === leagueId) ??
+        allLeagues.find((l) => l.competition === "ALL") ??
+        allLeagues.find((l) => l.competition === "PL") ??
+        allLeagues[0];
+      const id = selected.id;
+      const competition = selected.competition;
       setLeagueId(id);
+      setLeagueCompetition(competition);
+      setViewCompetition((prev) => (competition === "ALL" ? prev : competition));
+      const effectiveCompetition = competition === "ALL" ? viewCompetition : competition;
 
       const detailRes = await apiClient.get<LeagueDetail>(`/api/leagues/${id}`);
       const gw = detailRes.data.currentGameweek?.gameweek ?? 1;
@@ -144,8 +169,10 @@ export default function HomePage() {
 
       const [mineRes, fixturesRes, formRes] = await Promise.allSettled([
         apiClient.get<PicksMineResponse>(`/api/leagues/${id}/picks/mine`),
-        apiClient.get<{ fixtures: Fixture[]; deadline: string | null }>(`/api/fixtures?gameweek=${gw}`),
-        apiClient.get<FormStripResponse>("/api/teams/form-strip?limit=5"),
+        apiClient.get<FixturesResponse>(
+          `/api/fixtures?gameweek=${gw}&competition=${effectiveCompetition}${dateFilterOnly && activeDate ? `&date=${activeDate}` : ""}`
+        ),
+        apiClient.get<FormStripResponse>(`/api/teams/form-strip?limit=5&competition=${effectiveCompetition}`),
       ]);
 
       if (mineRes.status !== "fulfilled" || fixturesRes.status !== "fulfilled") {
@@ -155,6 +182,7 @@ export default function HomePage() {
       setLeagueName(detailRes.data.league.name);
       setMembers(detailRes.data.members);
       setCurrentGameweek(gw);
+      setActiveDate(fixturesRes.value.data.activeDate ?? null);
       setDeadline(fixturesRes.value.data.deadline ?? gwDeadline);
       setPicks(mineRes.value.data.picks);
       setAvailableTeamsCount(mineRes.value.data.availableTeams.length);
@@ -171,7 +199,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeDate, dateFilterOnly, leagueId, viewCompetition]);
 
   useEffect(() => {
     void load();
@@ -182,7 +210,8 @@ export default function HomePage() {
     setFormLoading(true);
     setTeamForm(null);
     try {
-      const res = await apiClient.get<TeamFormResponse>(`/api/teams/${team.id}/form?limit=6`);
+      const effectiveCompetition = leagueCompetition === "ALL" ? viewCompetition : leagueCompetition;
+      const res = await apiClient.get<TeamFormResponse>(`/api/teams/${team.id}/form?limit=6&competition=${effectiveCompetition}`);
       setTeamForm(res.data.form);
     } catch {
       setTeamForm([]);
@@ -220,9 +249,47 @@ export default function HomePage() {
   return (
     <main className="page-shell space-y-4">
       <header className="px-1">
-        <p className="font-dm text-xs uppercase tracking-[0.16em] text-slate-500">Premier League</p>
+        <p className="font-dm text-xs uppercase tracking-[0.16em] text-slate-500">
+          {leagueCompetition === "ALL" ? `All Leagues · ${competitionLabel(viewCompetition)}` : competitionLabel(leagueCompetition)}
+        </p>
         <h1 className="font-outfit text-3xl font-extrabold text-slate-100">Last Man Standing</h1>
         <p className="font-dm text-sm text-slate-400">{leagueName}</p>
+        {leagues.length > 1 && (
+          <select
+            value={leagueId ?? ""}
+            onChange={(e) => void load(e.target.value)}
+            className="font-dm mt-2 w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-200"
+          >
+            {leagues.map((league) => (
+              <option key={league.id} value={league.id}>
+                {league.name} · {competitionLabel(league.competition)}
+              </option>
+            ))}
+          </select>
+        )}
+        {leagueCompetition === "ALL" && (
+          <select
+            value={viewCompetition}
+            onChange={(e) => setViewCompetition(e.target.value)}
+            className="font-dm mt-2 w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-200"
+          >
+            {COMPETITIONS.map((c) => (
+              <option key={c.code} value={c.code}>
+                View: {c.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {activeDate && (
+          <button
+            onClick={() => setDateFilterOnly((v) => !v)}
+            className={`font-dm mt-2 rounded-lg border px-3 py-1.5 text-xs ${
+              dateFilterOnly ? "border-cyan-400/60 bg-cyan-500/10 text-cyan-300" : "border-slate-700 bg-slate-900/60 text-slate-300"
+            }`}
+          >
+            {dateFilterOnly ? `Showing agreed date only (${activeDate})` : `Show agreed date only (${activeDate})`}
+          </button>
+        )}
       </header>
 
       <section className="relative overflow-hidden rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-slate-900 to-cyan-950/30 p-4">
@@ -299,7 +366,7 @@ export default function HomePage() {
               ))}
             </div>
             <button
-              onClick={() => navigate("/fixtures-history")}
+              onClick={() => navigate(`/fixtures-history?competition=${leagueCompetition}`)}
               className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 font-dm text-sm font-semibold text-cyan-300"
             >
               View all fixtures →

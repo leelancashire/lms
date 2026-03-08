@@ -8,6 +8,7 @@ const PROCESSABLE_STATUSES = new Set<string>(["FINISHED", "POSTPONED"]);
 interface FixtureLite {
   id: string;
   gameweek: number;
+  competition?: string;
   homeTeamId: number;
   awayTeamId: number;
   homeScore: number | null;
@@ -19,6 +20,7 @@ interface FixtureLite {
 interface LeagueLite {
   id: string;
   name?: string;
+  competition?: string;
 }
 
 interface LeagueMemberLite {
@@ -37,10 +39,10 @@ interface PickLite {
 
 export interface ResultProcessorDb {
   fixture: {
-    findMany(args: { where: { gameweek: number }; orderBy?: { kickoffTime: "asc" } }): Promise<FixtureLite[]>;
+    findMany(args: { where: { gameweek: number; competition?: string }; orderBy?: { kickoffTime: "asc" } }): Promise<FixtureLite[]>;
   };
   league: {
-    findMany(args: { where: { status: "ACTIVE" }; select: { id: true; name?: true } }): Promise<LeagueLite[]>;
+    findMany(args: { where: { status: "ACTIVE"; competition?: string }; select: { id: true; name?: true; competition?: true } }): Promise<LeagueLite[]>;
     update(args: { where: { id: string }; data: { status: "COMPLETED" } }): Promise<unknown>;
   };
   leagueMember: {
@@ -108,11 +110,13 @@ function buildFirstFixtureByTeam(fixtures: FixtureLite[]): Map<number, FixtureLi
 
 export async function processGameweekResults(
   gameweek: number,
+  competition = "PL",
   db: ResultProcessorDb = prisma,
   notifier: ResultProcessorNotifier = defaultNotifier
 ) {
+  const filter = competition === "ALL" ? {} : { competition };
   const fixtures = await db.fixture.findMany({
-    where: { gameweek },
+    where: { gameweek, ...filter },
     orderBy: { kickoffTime: "asc" },
   });
 
@@ -127,7 +131,10 @@ export async function processGameweekResults(
 
   const fixtureByTeam = buildFirstFixtureByTeam(fixtures);
   const roundStart = fixtures[0]?.kickoffTime ?? new Date(0);
-  const activeLeagues = await db.league.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true } });
+  const activeLeagues = await db.league.findMany({
+    where: { status: "ACTIVE", ...filter },
+    select: { id: true, name: true, competition: true },
+  });
   const io = getIO();
 
   for (const league of activeLeagues) {

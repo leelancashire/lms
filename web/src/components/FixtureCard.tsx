@@ -12,6 +12,7 @@ interface FixtureCardProps {
     id: string;
     kickoffTime: string;
     status: string;
+    competition?: string;
     homeScore?: number | null;
     awayScore?: number | null;
     homeTeam: Team;
@@ -68,6 +69,9 @@ export default function FixtureCard({ fixture, onTeamClick, formStripByTeam }: F
           </p>
         ) : (
           <p className="font-dm text-[11px] text-slate-400">{kickoffText}</p>
+        )}
+        {fixture.competition && (
+          <p className="mt-0.5 font-dm text-[10px] uppercase tracking-[0.08em] text-slate-500">{fixture.competition}</p>
         )}
       </div>
 
