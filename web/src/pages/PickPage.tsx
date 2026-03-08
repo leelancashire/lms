@@ -37,10 +37,21 @@ interface PicksMine {
   availableTeams: Team[];
 }
 
+interface FormStripResponse {
+  strips: Array<{ teamId: number; form: Array<"W" | "D" | "L" | "P"> }>;
+}
+
 function difficultyForOdds(value: number) {
   if (value < 1.8) return { label: "Fav", cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" };
   if (value <= 2.5) return { label: "Even", cls: "bg-amber-500/20 text-amber-300 border-amber-500/40" };
   return { label: "Risky", cls: "bg-red-500/20 text-red-300 border-red-500/40" };
+}
+
+function resultCls(result: "W" | "D" | "L" | "P") {
+  if (result === "W") return "bg-emerald-500/20 text-emerald-300";
+  if (result === "D") return "bg-amber-500/20 text-amber-300";
+  if (result === "L") return "bg-red-500/20 text-red-300";
+  return "bg-slate-600/20 text-slate-300";
 }
 
 function PickSkeleton() {
@@ -67,6 +78,7 @@ export default function PickPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [usedTeamIds, setUsedTeamIds] = useState<Set<number>>(new Set());
+  const [formStripByTeam, setFormStripByTeam] = useState<Record<number, Array<"W" | "D" | "L" | "P">>>({});
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -91,20 +103,32 @@ export default function PickPage() {
       const currentGwRes = await apiClient.get<{ gameweek: number; deadline: string }>("/api/fixtures/next-open-gameweek");
       const gw = currentGwRes.data.gameweek;
 
-      const [teamsRes, mineRes, fixturesRes] = await Promise.all([
+      const [teamsRes, mineRes, fixturesRes, formRes] = await Promise.allSettled([
         apiClient.get<{ teams: Team[] }>("/api/teams"),
         apiClient.get<PicksMine>(`/api/leagues/${id}/picks/mine`),
         apiClient.get<{ fixtures: Fixture[]; deadline: string | null }>(`/api/fixtures?gameweek=${gw}`),
+        apiClient.get<FormStripResponse>("/api/teams/form-strip?limit=5"),
       ]);
 
-      setGameweek(gw);
-      setDeadline(fixturesRes.data.deadline ?? currentGwRes.data.deadline);
-      setTeams(teamsRes.data.teams);
-      setFixtures(fixturesRes.data.fixtures);
+      if (teamsRes.status !== "fulfilled" || mineRes.status !== "fulfilled" || fixturesRes.status !== "fulfilled") {
+        throw new Error("Failed to load required pick data");
+      }
 
-      const availableIds = new Set(mineRes.data.availableTeams.map((t) => t.id));
-      const used = new Set(teamsRes.data.teams.filter((t) => !availableIds.has(t.id)).map((t) => t.id));
+      setGameweek(gw);
+      setDeadline(fixturesRes.value.data.deadline ?? currentGwRes.data.deadline);
+      setTeams(teamsRes.value.data.teams);
+      setFixtures(fixturesRes.value.data.fixtures);
+
+      const availableIds = new Set(mineRes.value.data.availableTeams.map((t) => t.id));
+      const used = new Set(teamsRes.value.data.teams.filter((t) => !availableIds.has(t.id)).map((t) => t.id));
       setUsedTeamIds(used);
+      if (formRes.status === "fulfilled") {
+        setFormStripByTeam(
+          Object.fromEntries(formRes.value.data.strips.map((entry) => [entry.teamId, entry.form]))
+        );
+      } else {
+        setFormStripByTeam({});
+      }
     } catch (err: any) {
       setError(err?.response?.data?.error ?? "Failed to load pick data");
     } finally {
@@ -261,6 +285,15 @@ export default function PickPage() {
                           ? "Kicked off"
                           : new Date(fixture.kickoffTime).toLocaleDateString()}
                   </p>
+                  {formStripByTeam[team.id]?.length ? (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {formStripByTeam[team.id].slice(0, 5).map((r, idx) => (
+                        <span key={`${team.id}-f-${idx}`} className={`rounded px-1 py-0.5 font-dm text-[9px] ${resultCls(r)}`}>
+                          {r}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   {used && <span className="absolute bottom-1 right-1 font-dm text-[10px] text-red-400">✗ used</span>}
                 </button>
               );

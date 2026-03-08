@@ -42,6 +42,10 @@ interface PicksMineResponse {
   availableTeams: Array<{ id: number }>;
 }
 
+interface FormStripResponse {
+  strips: Array<{ teamId: number; form: Array<"W" | "D" | "L" | "P"> }>;
+}
+
 interface Fixture {
   id: string;
   kickoffTime: string;
@@ -113,6 +117,7 @@ export default function HomePage() {
   const [picks, setPicks] = useState<PickRow[]>([]);
   const [availableTeamsCount, setAvailableTeamsCount] = useState<number>(0);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
+  const [formStripByTeam, setFormStripByTeam] = useState<Record<number, Array<"W" | "D" | "L" | "P">>>({});
   const [selectedTeam, setSelectedTeam] = useState<TeamLite | null>(null);
   const [teamForm, setTeamForm] = useState<TeamFormRow[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -137,18 +142,30 @@ export default function HomePage() {
       const gw = detailRes.data.currentGameweek?.gameweek ?? 1;
       const gwDeadline = detailRes.data.currentGameweek?.deadline ?? null;
 
-      const [mineRes, fixturesRes] = await Promise.all([
+      const [mineRes, fixturesRes, formRes] = await Promise.allSettled([
         apiClient.get<PicksMineResponse>(`/api/leagues/${id}/picks/mine`),
         apiClient.get<{ fixtures: Fixture[]; deadline: string | null }>(`/api/fixtures?gameweek=${gw}`),
+        apiClient.get<FormStripResponse>("/api/teams/form-strip?limit=5"),
       ]);
+
+      if (mineRes.status !== "fulfilled" || fixturesRes.status !== "fulfilled") {
+        throw new Error("Failed to load required home data");
+      }
 
       setLeagueName(detailRes.data.league.name);
       setMembers(detailRes.data.members);
       setCurrentGameweek(gw);
-      setDeadline(fixturesRes.data.deadline ?? gwDeadline);
-      setPicks(mineRes.data.picks);
-      setAvailableTeamsCount(mineRes.data.availableTeams.length);
-      setFixtures(fixturesRes.data.fixtures);
+      setDeadline(fixturesRes.value.data.deadline ?? gwDeadline);
+      setPicks(mineRes.value.data.picks);
+      setAvailableTeamsCount(mineRes.value.data.availableTeams.length);
+      setFixtures(fixturesRes.value.data.fixtures);
+      if (formRes.status === "fulfilled") {
+        setFormStripByTeam(
+          Object.fromEntries(formRes.value.data.strips.map((entry) => [entry.teamId, entry.form]))
+        );
+      } else {
+        setFormStripByTeam({});
+      }
     } catch (err: any) {
       setError(err?.response?.data?.error ?? "Failed to load home screen");
     } finally {
@@ -278,7 +295,7 @@ export default function HomePage() {
           <>
             <div className="space-y-2">
               {fixtures.slice(0, 8).map((fixture) => (
-                <FixtureCard key={fixture.id} fixture={fixture} onTeamClick={openTeamForm} />
+                <FixtureCard key={fixture.id} fixture={fixture} onTeamClick={openTeamForm} formStripByTeam={formStripByTeam} />
               ))}
             </div>
             <button
