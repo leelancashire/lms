@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  displayName   String
+  passwordHash  String
+  fcmToken      String?
+  createdAt     DateTime @default(now())
+
+  leagueMemberships LeagueMember[]
+  picks             Pick[]
+  createdLeagues    League[]       @relation("LeagueCreator")
+}
+
+model Team {
+  id              Int      @id
+  fdoId           Int      @unique          // football-data.org team ID
+  apiFootballId   Int?     @unique          // API-Football team ID (nullable, mapped on first sync)
+  name            String
+  shortName       String                    // 3-letter code e.g. "ARS"
+  crestUrl        String?
+  createdAt       DateTime @default(now())
+
+  homeFixtures  Fixture[] @relation("HomeTeam")
+  awayFixtures  Fixture[] @relation("AwayTeam")
+  picks         Pick[]
+}
+
+model League {
+  id          String       @id @default(cuid())
+  name        String
+  code        String       @unique        // 6-char invite code
+  season      String       @default("2025-26")
+  competition String       @default("PL") // competition code
+  isPublic    Boolean      @default(false)
+  status      LeagueStatus @default(ACTIVE)
+  creatorId   String
+  creator     User         @relation("LeagueCreator", fields: [creatorId], references: [id])
+  createdAt   DateTime     @default(now())
+
+  members     LeagueMember[]
+  picks       Pick[]
+}
+
+model LeagueMember {
+  id                String       @id @default(cuid())
+  leagueId          String
+  userId            String
+  status            PlayerStatus @default(ALIVE)
+  eliminatedGameweek Int?
+  joinedAt          DateTime     @default(now())
+
+  league  League @relation(fields: [leagueId], references: [id])
+  user    User   @relation(fields: [userId], references: [id])
+
+  @@unique([leagueId, userId])
+}
+
+model Pick {
+  id        String     @id @default(cuid())
+  leagueId  String
+  userId    String
+  gameweek  Int
+  teamId    Int
+  result    PickResult @default(PENDING)
+  createdAt DateTime   @default(now())
+
+  league  League @relation(fields: [leagueId], references: [id])
+  user    User   @relation(fields: [userId], references: [id])
+  team    Team   @relation(fields: [teamId], references: [id])
+
+  @@unique([leagueId, userId, gameweek])  // one pick per player per GW
+  @@unique([leagueId, userId, teamId])    // can't reuse a team
+}
+
+model Fixture {
+  id              String        @id @default(cuid())
+  fdoId           Int           @unique     // football-data.org match ID
+  apiFootballId   Int?          @unique     // API-Football fixture ID (mapped on first live sync)
+  competition     String        @default("PL")
+  gameweek        Int
+  homeTeamId      Int
+  awayTeamId      Int
+  homeScore       Int?
+  awayScore       Int?
+  status          FixtureStatus @default(SCHEDULED)
+  kickoffTime     DateTime
+  minute          Int?                      // live match minute (from API-Football)
+  homeOdds        Float?                    // pre-match h2h odds (from The Odds API)
+  drawOdds        Float?
+  awayOdds        Float?
+  oddsUpdatedAt   DateTime?
+  updatedAt       DateTime      @updatedAt
+
+  homeTeam  Team @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam  Team @relation("AwayTeam", fields: [awayTeamId], references: [id])
+
+  events    MatchEvent[]
+
+  @@index([gameweek])
+  @@index([kickoffTime])
+}
+
+model MatchEvent {
+  id          String   @id @default(cuid())
+  fixtureId   String
+  type        String                       // "goal", "red_card", "yellow_card", "substitution"
+  minute      Int
+  teamSide    String                       // "home" or "away"
+  playerName  String?
+  detail      String?                      // e.g. "Penalty", "Own Goal"
+  createdAt   DateTime @default(now())
+
+  fixture     Fixture  @relation(fields: [fixtureId], references: [id])
+
+  @@index([fixtureId])
+}
+
+enum LeagueStatus {
+  ACTIVE
+  COMPLETED
+}
+
+enum PlayerStatus {
+  ALIVE
+  ELIMINATED
+  WINNER
+}
+
+enum PickResult {
+  PENDING
+  WON
+  LOST
+  DRAWN
+}
+
+enum FixtureStatus {
+  SCHEDULED
+  LIVE
+  FINISHED
+  POSTPONED
+}
